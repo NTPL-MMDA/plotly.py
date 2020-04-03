@@ -1,6 +1,7 @@
 import plotly.graph_objs as go
 import plotly.io as pio
 from collections import namedtuple, OrderedDict
+from ._special_inputs import IdentityMap, Constant
 
 from _plotly_utils.basevalidators import ColorscaleValidator
 from .colors import qualitative, sequential
@@ -40,6 +41,7 @@ class PxDefaults(object):
 
 defaults = PxDefaults()
 del PxDefaults
+
 
 MAPBOX_TOKEN = None
 
@@ -141,11 +143,15 @@ def make_mapping(args, variable):
     if variable == "dash":
         arg_name = "line_dash"
         vprefix = "line_dash"
+    if args[vprefix + "_map"] == "identity":
+        val_map = IdentityMap()
+    else:
+        val_map = args[vprefix + "_map"].copy()
     return Mapping(
         show_in_trace_name=True,
         variable=variable,
         grouper=args[arg_name],
-        val_map=args[vprefix + "_map"].copy(),
+        val_map=val_map,
         sequence=args[vprefix + "_sequence"],
         updater=lambda trace, v: trace.update({parent: {variable: v}}),
         facet=None,
@@ -937,6 +943,8 @@ def build_dataframe(args, attrables, array_attrables, constructor):
         else:
             df_output[df_input.columns] = df_input[df_input.columns]
 
+    constants = dict()
+
     # Loop over possible arguments
     for field_name in attrables:
         # Massaging variables
@@ -968,8 +976,15 @@ def build_dataframe(args, attrables, array_attrables, constructor):
                     "pandas MultiIndex is not supported by plotly express "
                     "at the moment." % field
                 )
+            # ----------------- argument is a constant ----------------------
+            if isinstance(argument, Constant):
+                col_name = _check_name_not_reserved(
+                    str(argument.label) if argument.label is not None else field,
+                    reserved_names,
+                )
+                constants[col_name] = argument.value
             # ----------------- argument is a col name ----------------------
-            if isinstance(argument, str) or isinstance(
+            elif isinstance(argument, str) or isinstance(
                 argument, int
             ):  # just a column name given as str or int
                 if not df_provided:
@@ -1072,6 +1087,9 @@ def build_dataframe(args, attrables, array_attrables, constructor):
         if constructor in [go.Histogram]:
             args["x" if orient_v else "y"] = "value"
             args["color"] = args["color"] or "variable"
+
+    for col_name in constants:
+        df_output[col_name] = constants[col_name]
 
     args["data_frame"] = df_output
     return args
@@ -1491,9 +1509,10 @@ def make_figure(args, constructor, trace_patch=None, layout_patch=None):
         for col, val, m in zip(grouper, group_name, grouped_mappings):
             if col != one_group:
                 key = get_label(args, col)
-                mapping_labels[key] = str(val)
-                if m.show_in_trace_name:
-                    trace_name_labels[key] = str(val)
+                if not isinstance(m.val_map, IdentityMap):
+                    mapping_labels[key] = str(val)
+                    if m.show_in_trace_name:
+                        trace_name_labels[key] = str(val)
                 if m.variable == "animation_frame":
                     frame_name = val
         trace_name = ", ".join(trace_name_labels.values())
